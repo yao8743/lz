@@ -1512,6 +1512,7 @@ async def handle_redeem_callback(callback: CallbackQuery, bot: Bot):
                 chat_id=user_id,
                 text=f"{file_id}",
                 parse_mode=ParseMode.HTML,
+                protect_content=True,  # 防止被二次转发后暴露给非目标用户
                
             )
         else:
