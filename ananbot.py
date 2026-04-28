@@ -2976,7 +2976,6 @@ async def _publish_content_and_notify_owner(product_row,  send_only_ly=False):
             
         🔗 <a href="{resource_url}">资源连结</a>。
 
-        如果连结失效，需要请您先加入<code>贤师楼</code>。
         如果您对审核结果有任何疑问，欢迎在透过下方的「教务处小助手」提出。
         感谢您的理解与支持！
         ''') 

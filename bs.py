@@ -913,8 +913,9 @@ async def handle_media_message(message: Message, bot: Bot):
     #     )
     # except Exception as e:
     #     print(f"[Bot] copy_message error: {e}")
-
+    new_thumb_file_id = None
     if message.photo:
+        first_target = None
         raw_caption = (message.caption or "").strip()
         json_caption = parse_json_caption(raw_caption)
         photo_caption = sanitize_photo_caption(raw_caption)
@@ -945,9 +946,112 @@ async def handle_media_message(message: Message, bot: Bot):
                     print(f"[Bot5] photo json caption {k} first_target => {first_target}", flush=True)
                 else:    
                     print(f"[Bot5] photo json caption {k} => {v}", flush=True)
+            
+            await PGDB.insert_file_stock_if_not_exists(
+                file_type="cover",
+                file_unique_id=largest_photo.file_unique_id,
+                file_id=first_target,
+                thumb_file_id=largest_photo.file_id,
+                caption=photo_caption,
+                bot_username=BOT_USERNAME,
+                user_id=user.id,
+                file_size=None,
+                duration=None,
+            )
+
+            new_file_type = "cover"
+            new_file_unique_id=largest_photo.file_unique_id
+            new_file_id=first_target
+            new_thumb_file_id=largest_photo.file_id
+            new_caption=photo_caption
+            new_file_size = None           # ✅ 新增
+            new_duration = None    
+
+
+
+        else:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="🙏 贫僧只收视频",
+                reply_to_message_id=message.message_id,
+            )
+            return
+    
 
     # 2) 只有 video 才参与“兑换池”
-    if not message.video:
+    elif message.video:
+        await bot.send_message(
+            chat_id=message.chat.id,
+            text="🙏 贫僧只收视频",
+            reply_to_message_id=message.message_id,
+        )
+        
+
+        video = message.video
+        video_thumb = getattr(video, "thumbnail", None)
+
+        new_file_type = "video"
+        new_file_unique_id = video.file_unique_id
+        new_file_id = video.file_id
+        new_thumb_file_id = video_thumb.file_id if video_thumb else None
+        new_caption = (video.file_name or (message.caption or ""))
+        new_file_size = video.file_size           # ✅ 新增
+        new_duration = video.duration
+
+
+        if new_duration < 10:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="🙏 施主，此片短促如闪念，缘浅不成，贫僧不收，望施主莫怪。",
+                reply_to_message_id=message.message_id,
+            )
+            return      
+
+        if not new_file_size or new_file_size < 10 * 1024 * 1024:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="🙏 施主，此片尺寸甚微，贫僧怕收了也生不起功德，只好放它随风而去。",
+                reply_to_message_id=message.message_id,
+            )
+            return 
+
+        # print(f"{message}")
+
+        # 只收来自指定来源的转发
+        forward_user_id = None
+        if message.forward_origin and getattr(message.forward_origin, "type", "") == "user":
+            sender_user = getattr(message.forward_origin, "sender_user", None)
+            forward_user_id = getattr(sender_user, "id", None)
+        elif message.forward_from:
+            forward_user_id = message.forward_from.id
+
+        if forward_user_id != 7294369541:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="🙏 施主，贫僧只收来自「贝壳邮局」的转发，望施主莫怪。",
+                reply_to_message_id=message.message_id,
+                protect_content=True,  # 防止被二次转发后暴露给非目标用户
+            )
+            return
+
+        # 文件名 / caption 用来当展示文字
+        file_name = video.file_name or ""
+        new_caption = file_name or (message.caption or "")
+
+        print(f"[Bot] Received video from user_id={user.id}, file_unique_id={new_file_unique_id}")
+
+        # 先检查是否已存在于 file_stock
+        existed = await PGDB.get_file_stock_by_file_unique_id(new_file_unique_id)
+        if existed:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="🙏 这份已有其他施主布施了",
+                reply_to_message_id=message.message_id,
+            )
+            return
+
+        print(f"[Bot] New video, processing for user_id={user.id}, file_unique_id={new_file_unique_id}")
+    elif not message.video:
         await bot.send_message(
             chat_id=message.chat.id,
             text="🙏 贫僧只收视频",
@@ -955,64 +1059,6 @@ async def handle_media_message(message: Message, bot: Bot):
         )
         return
 
-    video = message.video
-    file_unique_id = video.file_unique_id
-    file_id = video.file_id
-    file_size = video.file_size           # ✅ 新增
-    duration = video.duration
-
-    if duration < 10:
-        await bot.send_message(
-            chat_id=message.chat.id,
-            text="🙏 施主，此片短促如闪念，缘浅不成，贫僧不收，望施主莫怪。",
-            reply_to_message_id=message.message_id,
-        )
-        return      
-
-    if not file_size or file_size < 10 * 1024 * 1024:
-        await bot.send_message(
-            chat_id=message.chat.id,
-            text="🙏 施主，此片尺寸甚微，贫僧怕收了也生不起功德，只好放它随风而去。",
-            reply_to_message_id=message.message_id,
-        )
-        return 
-
-    # print(f"{message}")
-
-    # 只收来自指定来源的转发
-    forward_user_id = None
-    if message.forward_origin and getattr(message.forward_origin, "type", "") == "user":
-        sender_user = getattr(message.forward_origin, "sender_user", None)
-        forward_user_id = getattr(sender_user, "id", None)
-    elif message.forward_from:
-        forward_user_id = message.forward_from.id
-
-    if forward_user_id != 7294369541:
-        await bot.send_message(
-            chat_id=message.chat.id,
-            text="🙏 施主，贫僧只收来自「贝壳邮局」的转发，望施主莫怪。",
-            reply_to_message_id=message.message_id,
-            protect_content=True,  # 防止被二次转发后暴露给非目标用户
-        )
-        return
-
-    # 文件名 / caption 用来当展示文字
-    file_name = video.file_name or ""
-    caption = file_name or (message.caption or "")
-
-    print(f"[Bot] Received video from user_id={user.id}, file_unique_id={file_unique_id}")
-
-    # 先检查是否已存在于 file_stock
-    existed = await PGDB.get_file_stock_by_file_unique_id(file_unique_id)
-    if existed:
-        await bot.send_message(
-            chat_id=message.chat.id,
-            text="🙏 这份已有其他施主布施了",
-            reply_to_message_id=message.message_id,
-        )
-        return
-
-    print(f"[Bot] New video, processing for user_id={user.id}, file_unique_id={file_unique_id}")
 
     stat_date = today_sgt()
 
@@ -1020,17 +1066,33 @@ async def handle_media_message(message: Message, bot: Bot):
     await PGDB.upsert_talking_task_add_one(user_id=user.id, stat_date=stat_date)
 
     # 先插入一条记录，thumb_file_id 暂时为 None（后台再补）
+    # new_id = await PGDB.insert_file_stock_if_not_exists(
+    #     file_type="video",
+    #     file_unique_id=file_unique_id,
+    #     file_id=file_id,
+    #     thumb_file_id=None,
+    #     caption=caption,
+    #     bot_username=BOT_USERNAME,
+    #     user_id=user.id,
+    #     file_size=file_size,
+    #     duration=duration,
+    # )
+
+    # 先插入一条记录，thumb_file_id 暂时为 None（后台再补）
     new_id = await PGDB.insert_file_stock_if_not_exists(
-        file_type="video",
-        file_unique_id=file_unique_id,
-        file_id=file_id,
-        thumb_file_id=None,
-        caption=caption,
+        file_type=new_file_type,
+        file_unique_id=new_file_unique_id,
+        file_id=new_file_id,
+        thumb_file_id=new_thumb_file_id,
+        caption=new_caption,
         bot_username=BOT_USERNAME,
         user_id=user.id,
-        file_size=file_size,
-        duration=duration,
+        file_size=new_file_size,
+        duration=new_duration,
     )
+
+
+
     if new_id is None:
         # 理论上不会发生，防御一下
         return
@@ -1079,16 +1141,17 @@ async def handle_media_message(message: Message, bot: Bot):
             thumb_file_id, _thumb_unique_id = thumb_info
 
             await PGDB.update_file_stock_thumb(
-                file_unique_id=file_unique_id,
+                file_unique_id=new_file_unique_id,
                 thumb_file_id=thumb_file_id,
             )
 
         return _job()
 
-    spawn_once(
-        key=f"thumb:{file_unique_id}",
-        coro_factory=_coro_factory,
-    )
+    if message.video:
+        spawn_once(
+            key=f"thumb:{new_file_unique_id}",
+            coro_factory=_coro_factory,
+        )
 
 
 # ---- 3 群组发言计数 ----
@@ -1379,6 +1442,7 @@ async def handle_redeem_callback(callback: CallbackQuery, bot: Bot):
        - count <=0 → 提示「群里发言或发不重覆的视频资源可以兑换视频」
        - 没有纪录 → 提示「你今天需要上传一个视频才能开始兑换」
     """
+    print(f"[Bot] redeem callback from user_id={callback.from_user.id} with data={callback.data}", flush=True)
     if await block_if_blacklisted_callback(callback):
         return
 
@@ -1398,7 +1462,13 @@ async def handle_redeem_callback(callback: CallbackQuery, bot: Bot):
         await callback.answer("参数错误，请稍后再试。", show_alert=True)
         return
 
-    new_count = await PGDB.consume_one_quota(user_id, stat_date)
+    if not is_admin(callback.from_user.id):
+        print(f"[Redeem] user_id={user_id} redeeming id={id}",flush=True)
+        new_count = await PGDB.consume_one_quota(user_id, stat_date)
+    else:
+        print(f"[Redeem] admin user_id={user_id} redeeming id={id} → no quota consumed",flush=True)
+        new_count=1  # 管理员不受兑换限制，直接当作有额度，但不扣除
+       
 
     if new_count is None:
         await callback.answer("🙏你今天需要布施一个视频才能开始化缘。直接传给贫僧就可以", show_alert=True)
@@ -1418,18 +1488,39 @@ async def handle_redeem_callback(callback: CallbackQuery, bot: Bot):
         return
 
     file_id = row["file_id"]
+    thumb_file_id = row['thumb_file_id']
     try:
         if new_count <=0:
             caption = f"你今天的功德值为 {new_count}，不能再化缘了，但可以在群里发言、布施视频或是分享连结给新人就能获得功德。\n\nhttps://t.me/{BOT_USERNAME}?start={id}"
         else:
             caption = f"你今天的功德值为 {new_count}，还可以继续化缘。\n\nhttps://t.me/{BOT_USERNAME}?start={id}"
         
-        await bot.send_video(
-            chat_id=user_id,
-            video=file_id,
-            parse_mode=ParseMode.HTML,
-            caption=caption,
-        )
+        '''
+            await PGDB.insert_file_stock_if_not_exists(
+                file_type="cover",
+                file_unique_id=largest_photo.file_unique_id,
+                file_id=first_target,
+                thumb_file_id=largest_photo.file_id,
+                caption=photo_caption,
+                bot_username=BOT_USERNAME,
+                user_id=user.id
+            )
+        '''
+
+        if row["file_type"] == "cover":
+            await bot.send_message(
+                chat_id=user_id,
+                text=f"{file_id}",
+                parse_mode=ParseMode.HTML,
+               
+            )
+        else:
+            await bot.send_video(
+                chat_id=user_id,
+                video=file_id,
+                parse_mode=ParseMode.HTML,
+                caption=caption,
+            )
         await callback.answer("🙏化缘成功，已发送视频给你。", show_alert=False)
     except Exception as e:
         print(f"[Bot] send_video error: {e}")
