@@ -1,7 +1,9 @@
 import asyncio
 import json
+import os
 import random
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -20,6 +22,41 @@ def _build_client() -> TelegramClient:
 		return TelegramClient(StringSession(raw), api_id, API_HASH)
 
 	return TelegramClient(raw or "man", api_id, API_HASH)
+
+
+async def _handle_healthcheck(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+	try:
+		await reader.read(1024)
+		body = b"ok"
+		response = (
+			b"HTTP/1.1 200 OK\r\n"
+			b"Content-Type: text/plain; charset=utf-8\r\n"
+			+ f"Content-Length: {len(body)}\r\n".encode("ascii")
+			+ b"Connection: close\r\n\r\n"
+			+ body
+		)
+		writer.write(response)
+		await writer.drain()
+	finally:
+		writer.close()
+		with suppress(Exception):
+			await writer.wait_closed()
+
+
+async def run_health_server() -> None:
+	host = os.getenv("HOST", "0.0.0.0")
+	port = int(os.getenv("PORT", "10000"))
+	server = await asyncio.start_server(_handle_healthcheck, host, port)
+	print(f"HEALTHCHECK server listening on {host}:{port}", flush=True)
+	async with server:
+		await server.serve_forever()
+
+
+async def main() -> None:
+	await asyncio.gather(
+		forwarder2.run(),
+		run_health_server(),
+	)
 
 
 class GroupMediaForwarder:
@@ -400,4 +437,4 @@ forwarder2 = GroupMediaForwarder(
 )
 
 if __name__ == "__main__":
-	asyncio.run(forwarder2.run())
+	asyncio.run(main())
